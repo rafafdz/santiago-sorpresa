@@ -25,8 +25,8 @@ export function Ending({ elapsedS, onReplay, onLook }: Props) {
         <p className="invite-body">{INVITATION.body}</p>
         <dl className="invite-details">
           <div>
-            <dt>Cuándo</dt>
-            <dd>{INVITATION.when}</dd>
+            <dt>Fecha</dt>
+            <dd>{INVITATION.date}</dd>
           </div>
           <div>
             <dt>Dónde</dt>
@@ -37,7 +37,10 @@ export function Ending({ elapsedS, onReplay, onLook }: Props) {
             <dd>{INVITATION.dress}</dd>
           </div>
         </dl>
-        <p className="invite-sign">{INVITATION.signature}</p>
+        <p className="invite-closing">{INVITATION.closing}</p>
+        <p className="invite-sign" aria-label={`Firmado por ${INVITATION.signature}`}>
+          {INVITATION.signature}
+        </p>
         <p className="invite-time">
           {inTime
             ? `Abriste la caja en ${formatClock(elapsedS)}. Encadenado a vista.`

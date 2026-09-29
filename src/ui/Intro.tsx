@@ -1,4 +1,4 @@
-import { PLAYER } from '../config';
+import { FRIENDS, PLAYER } from '../config';
 
 export function Intro({ onStart, returning }: { onStart: () => void; returning?: boolean }) {
   return (
@@ -17,6 +17,7 @@ export function Intro({ onStart, returning }: { onStart: () => void; returning?:
             última pared que escalaste, pensamos que te faltaba un problema que no se resuelve con descenso de gradiente.
           </p>
           <p>Tienes cinco minutos. Lo que hay adentro es para ti.</p>
+          <p className="letter-sign">— {FRIENDS.slice(0, -1).join(', ')} y {FRIENDS[FRIENDS.length - 1]}</p>
         </div>
         <ul className="howto" aria-label="Cómo jugar">
           <li>

@@ -54,9 +54,9 @@ export function hintFor(s: Pick<GameState, 'foundClue' | 'sawRoute'>): string {
     return 'Empieza por la bolsa de magnesio, a la izquierda de la mesa. Ábrela y mete la mano: hay algo metálico adentro.';
   }
   if (!s.sawRoute) {
-    return 'La ficha habla del muro de escalada del fondo. Tócalo para verlo de cerca y sigue la línea de magnesio desde la BASE.';
+    return 'La ficha habla del muro de escalada del fondo: tiene nieve arriba y una laguna abajo. Tócalo para verlo de cerca.';
   }
-  return 'Cuenta solo las presas azules: de la BASE a la bandera I, de la I a la II y de la II a la III. Las banderas y las presas de otros colores no cuentan. El primer número es 4.';
+  return 'El color del agua es el azul: en cada tramo de la línea de magnesio cuenta solo las presas azules que llevan hasta su bandera (las grises de la línea no se pisan). Después lee los tres números empezando por la bandera de la nieve, arriba, y terminando en la más cercana a la laguna.';
 }
 
 export function reducer(s: GameState, a: Action): GameState {
@@ -111,6 +111,6 @@ export function steps(s: GameState): Step[] {
 export function objective(s: GameState): string {
   if (s.unlocked) return 'La caja está abierta. Hay un sobre adentro.';
   if (!s.foundClue) return 'Algo suena dentro de la bolsa de magnesio.';
-  if (!s.sawRoute) return 'Lee la ficha y busca la ruta en el muro del fondo.';
-  return 'Sigue la cuerda hasta la caja y marca los tres números de la ruta.';
+  if (!s.sawRoute) return 'La ficha habla de nieve y de una laguna. Búscalas en el muro del fondo.';
+  return 'Descifra la ruta del muro y sigue la cuerda hasta la caja: tres números, en el orden correcto.';
 }

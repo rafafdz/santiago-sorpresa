@@ -11,13 +11,21 @@ import {
   wallTexture,
   woodTexture,
 } from './textures';
+import { maxPixelRatio } from './webgl';
 
-export type HotspotId = 'bag' | 'wall' | 'safe';
+import type { HotspotId } from './sceneProps';
+export type { HotspotId };
 
 interface Options {
   onTap: (id: HotspotId) => void;
+  /** The GPU dropped our context (common on Android under memory pressure). */
+  onContextLost: () => void;
   reducedMotion: boolean;
 }
+
+const isMobile = () =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.('(pointer: coarse)').matches || Math.min(window.innerWidth, window.innerHeight) < 600);
 
 const ICE = new THREE.Color('#7cc4f0');
 const TARGET = new THREE.Vector3(-0.15, 0.7, -0.45);
@@ -61,8 +69,9 @@ export class EscapeScene {
   private disposables: { dispose: () => void }[] = [];
 
   constructor(private canvas: HTMLCanvasElement, private opts: Options) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const mobile = isMobile();
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: 'default' });
+    this.renderer.setPixelRatio(maxPixelRatio(mobile, window.devicePixelRatio));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -97,6 +106,7 @@ export class EscapeScene {
     canvas.addEventListener('pointerdown', this.onDown);
     canvas.addEventListener('pointerup', this.onUp);
     canvas.addEventListener('pointermove', this.onMove);
+    canvas.addEventListener('webglcontextlost', this.onLost);
     this.resizeObs = new ResizeObserver(() => this.fitCamera(false));
     this.resizeObs.observe(canvas.parentElement ?? canvas);
     this.renderer.setAnimationLoop(this.tick);
@@ -144,6 +154,7 @@ export class EscapeScene {
     this.canvas.removeEventListener('pointerdown', this.onDown);
     this.canvas.removeEventListener('pointerup', this.onUp);
     this.canvas.removeEventListener('pointermove', this.onMove);
+    this.canvas.removeEventListener('webglcontextlost', this.onLost);
     this.controls.dispose();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -157,6 +168,12 @@ export class EscapeScene {
   }
 
   // ---------------------------------------------------------------- input
+
+  private onLost = (e: Event) => {
+    e.preventDefault();
+    this.renderer.setAnimationLoop(null);
+    this.opts.onContextLost();
+  };
 
   private onDown = (e: PointerEvent) => {
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -329,7 +346,7 @@ export class EscapeScene {
     lamp.position.set(0.05, 2.75, 0.35);
     lamp.target.position.set(-0.15, 0, -0.1);
     lamp.castShadow = true;
-    lamp.shadow.mapSize.set(1024, 1024);
+    lamp.shadow.mapSize.setScalar(isMobile() ? 512 : 1024);
     lamp.shadow.bias = -0.0005;
     lamp.shadow.radius = 4;
     s.add(lamp, lamp.target);

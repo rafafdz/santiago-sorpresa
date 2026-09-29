@@ -1,18 +1,21 @@
 /**
- * Host-editable content. Change these strings to match the real plan
- * before sending the link to Santiago (see README → "Personalizar").
+ * Host-editable content (see README → "Personalizar").
+ * Keep it free of concrete dates/times: the plan is coordinated in the group.
  */
 export const PLAYER = {
   firstName: 'Santiago',
   lastName: 'Laguna',
 };
 
+export const FRIENDS = ['Rafa', 'Tomás C', 'Tomás P'] as const;
+
 export const INVITATION = {
   headline: 'Estás invitado a un escape room de verdad',
   body:
     'Esta caja fue el calentamiento. La próxima tiene candados reales, un reloj de 60 minutos y un equipo esperándote.',
-  when: 'Sábado · 19:30',
+  date: 'Lo coordinamos entre todos',
   where: 'Te mandamos la dirección por WhatsApp',
   dress: 'Ropa cómoda. El magnesio, opcional.',
-  signature: 'Con cariño, tus amigos',
+  closing: 'Con cariño,',
+  signature: FRIENDS.join(' · '),
 };

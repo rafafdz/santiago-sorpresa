@@ -72,12 +72,9 @@ export function BagModal({ found, onFound, onClose, onGoToWall }: Props) {
           </svg>
           <blockquote className="engraving">
             <p>{PLAYER.firstName}:</p>
-            <p>Toda ruta empieza en la BASE.</p>
-            <p>Cada bandera roja es una cumbre: I, II y III.</p>
-            <p>
-              El número de cada cumbre son las <em className="blue">presas azules</em> de su tramo.
-            </p>
-            <p>La cuerda une el muro con la caja.</p>
+            <p>Sube solo por el color del agua.</p>
+            <p>Cada bandera guarda lo que pisaste para alcanzarla.</p>
+            <p>Y la clave se lee como corre el agua: de la nieve a la laguna.</p>
           </blockquote>
           <button type="button" className="btn btn-primary" onClick={onGoToWall} data-autofocus>
             Ir al muro

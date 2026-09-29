@@ -1,11 +1,7 @@
 import * as THREE from 'three';
-import { BOARD_H, BOARD_W, FLAGS, HOLDS, ROUTE_BASE, mulberry32, routePolyline } from '../game/puzzle';
+import { BOARD_H, BOARD_W, FLAGS, HOLDS, mulberry32, routePolyline } from '../game/puzzle';
+import { HOLD_COLORS, LAGUNA, SNOW_PATH, flagPennant } from '../game/wallArt';
 
-export const HOLD_COLORS: Record<string, string> = {
-  blue: '#5fb4e8',
-  orange: '#d9793a',
-  gray: '#7b8594',
-};
 
 function canvas(w: number, h: number) {
   const c = document.createElement('canvas');
@@ -68,15 +64,22 @@ export function wallTexture(): THREE.CanvasTexture {
     blob(ctx, h.x - 2, h.y - 3, h.r * 0.45, i + 50);
     ctx.fill();
   });
-  FLAGS.forEach((f) => drawFlag(ctx, f.x, f.y, f.label));
+  FLAGS.forEach((f) => drawFlag(ctx, f.x, f.y));
+  // landmarks: snow on top, laguna at the foot
+  ctx.fillStyle = '#eef3f8';
+  ctx.fill(new Path2D(SNOW_PATH));
+  ctx.fillStyle = '#3f8fc4';
+  ctx.beginPath();
+  ctx.ellipse(LAGUNA.cx, LAGUNA.cy, LAGUNA.rx, LAGUNA.ry, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = '#f3e6cc';
-  ctx.font = '600 13px Georgia, serif';
+  ctx.font = '600 9px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText('BASE', ROUTE_BASE.x, ROUTE_BASE.y + 12);
+  ctx.fillText('LAGUNA', LAGUNA.cx, LAGUNA.cy + 3);
   return finish(c);
 }
 
-function drawFlag(ctx: CanvasRenderingContext2D, x: number, y: number, label: string) {
+function drawFlag(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.strokeStyle = '#f3e6cc';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -84,15 +87,7 @@ function drawFlag(ctx: CanvasRenderingContext2D, x: number, y: number, label: st
   ctx.lineTo(x, y - 16);
   ctx.stroke();
   ctx.fillStyle = '#e2483d';
-  ctx.beginPath();
-  ctx.moveTo(x, y - 16);
-  ctx.lineTo(x + 18, y - 10);
-  ctx.lineTo(x, y - 4);
-  ctx.fill();
-  ctx.fillStyle = '#f3e6cc';
-  ctx.font = '700 11px Georgia, serif';
-  ctx.textAlign = 'left';
-  ctx.fillText(label, x + 4, y + 10);
+  ctx.fill(new Path2D(flagPennant(x, y)));
 }
 
 export function woodTexture(): THREE.CanvasTexture {

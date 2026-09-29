@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { sfx } from '../game/audio';
-import { SOLUTION, checkCode, digitFromRotation, shortestStep, wrapDigit } from '../game/puzzle';
+import { SOLUTION, diagnose, digitFromRotation, shortestStep, wrapDigit } from '../game/puzzle';
 import { Modal } from './Modal';
 
 interface Props {
@@ -60,7 +60,8 @@ export function SafeModal({ sawRoute, attempts, hintUsed, onHint, onWrong, onUnl
   );
 
   const submit = (code: number[]) => {
-    if (checkCode(code)) {
+    const verdict = diagnose(code);
+    if (verdict === 'ok') {
       setStatus('unlocking');
       setMessage('Clac, clac… los pestillos ceden.');
       sfx.unlock();
@@ -71,9 +72,13 @@ export function SafeModal({ sawRoute, attempts, hintUsed, onHint, onWrong, onUnl
       sfx.wrong();
       onWrong();
       setMessage(
-        attempts >= 1 && !hintUsed
-          ? 'El mecanismo se resiste otra vez. Si quieres, usa tu pista: no hay castigo.'
-          : 'El mecanismo se resiste con un golpe seco. Nada se rompió: revisa la ruta y vuelve a intentar.',
+        verdict === 'order'
+          ? 'Clac… los pestillos casi ceden. Esos números suenan bien, pero no en ese orden.'
+          : verdict === 'color'
+            ? 'El mecanismo se resiste. Contaste con cuidado, pero en cada tramo sobra algo: no todo en la línea es del color del agua.'
+            : attempts >= 1 && !hintUsed
+              ? 'El mecanismo se resiste otra vez. Si quieres, usa tu pista: no hay castigo.'
+              : 'El mecanismo se resiste con un golpe seco. Nada se rompió: vuelve a mirar el muro y reintenta.',
       );
       timers.current.push(
         window.setTimeout(() => {
@@ -282,7 +287,7 @@ export function SafeModal({ sawRoute, attempts, hintUsed, onHint, onWrong, onUnl
                   busy ? 'slot-ok' : ''
                 }`}
               >
-                <small>{['I', 'II', 'III'][i]}</small>
+                <small>{i + 1}</small>
                 {i < digits.length ? digits[i] : i === digits.length && !busy ? value : '·'}
               </span>
             ))}
@@ -314,7 +319,7 @@ export function SafeModal({ sawRoute, attempts, hintUsed, onHint, onWrong, onUnl
             </button>
           </div>
           <p className={`safe-msg ${status}`} role="status" aria-live="assertive">
-            {message ?? (sawRoute ? 'Tramo I, II y III: en ese orden.' : 'Tres números. ¿Dónde estarán escritos?')}
+            {message ?? (sawRoute ? 'Tres números. ¿Hacia dónde corre el agua?' : 'Tres números. ¿Dónde estarán escritos?')}
           </p>
         </div>
       </div>

@@ -1,39 +1,34 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { EscapeScene, type HotspotId } from './EscapeScene';
+import { PINS, type SceneProps } from './sceneProps';
 
-interface Props {
-  focus: HotspotId | null;
-  tokenRevealed: boolean;
-  safeOpen: boolean;
-  interactive: boolean;
-  reducedMotion: boolean;
-  onTap: (id: HotspotId) => void;
-  resetSignal: number;
-}
-
-const PINS: { id: HotspotId; label: string; aria: string }[] = [
-  { id: 'bag', label: 'Magnesio', aria: 'Inspeccionar la bolsa de magnesio' },
-  { id: 'wall', label: 'Muro', aria: 'Mirar de cerca el muro de escalada' },
-  { id: 'safe', label: 'Caja fuerte', aria: 'Acercarse a la caja fuerte' },
-];
-
-export function SceneView({ focus, tokenRevealed, safeOpen, interactive, reducedMotion, onTap, resetSignal }: Props) {
+/**
+ * The 3D view. Loaded lazily (React.lazy) only when WebGL is available, so the
+ * lite view never downloads or evaluates three.js.
+ */
+export default function SceneView({ focus, tokenRevealed, safeOpen, interactive, reducedMotion, onTap, resetSignal, onFail }: SceneProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<EscapeScene | null>(null);
   const pinRefs = useRef<Partial<Record<HotspotId, HTMLButtonElement | null>>>({});
   const tapRef = useRef(onTap);
   tapRef.current = onTap;
-  const [failed, setFailed] = useState(false);
+  const failRef = useRef(onFail);
+  failRef.current = onFail;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let scene: EscapeScene;
     try {
-      scene = new EscapeScene(canvas, { onTap: (id) => tapRef.current(id), reducedMotion });
+      scene = new EscapeScene(canvas, {
+        onTap: (id) => tapRef.current(id),
+        onContextLost: () => failRef.current('lost'),
+        reducedMotion,
+      });
     } catch (err) {
-      console.error(err);
-      setFailed(true);
+      console.warn('3D view unavailable, switching to the lite view', err);
+      // Defer so we never update the parent during this effect's commit.
+      queueMicrotask(() => failRef.current('init'));
       return;
     }
     scene.setPins(pinRefs.current);
@@ -54,12 +49,7 @@ export function SceneView({ focus, tokenRevealed, safeOpen, interactive, reduced
   return (
     <div className="scene" aria-label="Habitación en 3D: arrastra para girar la vista" role="region">
       <canvas ref={canvasRef} className="scene-canvas" />
-      {failed && (
-        <p className="scene-fallback">
-          Tu navegador no pudo iniciar WebGL. Igual puedes jugar con los botones de cada objeto.
-        </p>
-      )}
-      <div className={`pins ${failed ? 'pins-static' : ''}`} aria-hidden={!interactive}>
+      <div className="pins" aria-hidden={!interactive}>
         {PINS.map((p) => (
           <button
             key={p.id}
