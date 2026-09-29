@@ -11,21 +11,21 @@ import {
   wallTexture,
   woodTexture,
 } from './textures';
-import { maxPixelRatio } from './webgl';
+import { WebGLUnavailableError, createGLContext, detectDevice, rendererSettings, watchContextLoss, type WebGLVersion } from './webgl';
 
 import type { HotspotId } from './sceneProps';
 export type { HotspotId };
 
+export type ContextState = 'lost' | 'restored' | 'giveup';
+
 interface Options {
   onTap: (id: HotspotId) => void;
-  /** The GPU dropped our context (common on Android under memory pressure). */
-  onContextLost: () => void;
+  /** GPU context lost / restored / not restored in time (common on Android under memory pressure). */
+  onContextState: (state: ContextState) => void;
   reducedMotion: boolean;
 }
 
-const isMobile = () =>
-  typeof window !== 'undefined' &&
-  (window.matchMedia?.('(pointer: coarse)').matches || Math.min(window.innerWidth, window.innerHeight) < 600);
+const ENV_INTENSITY = 0.35;
 
 const ICE = new THREE.Color('#7cc4f0');
 const TARGET = new THREE.Vector3(-0.15, 0.7, -0.45);
@@ -41,7 +41,10 @@ export class EscapeScene {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(42, 1, 0.05, 50);
   private controls: OrbitControls;
-  private timer = new THREE.Timer();
+  private clock = new THREE.Clock();
+  readonly glVersion: WebGLVersion;
+  private envRT: THREE.WebGLRenderTarget | null = null;
+  private stopWatching: () => void;
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private hotspotMeshes: THREE.Object3D[] = [];
@@ -69,24 +72,29 @@ export class EscapeScene {
   private disposables: { dispose: () => void }[] = [];
 
   constructor(private canvas: HTMLCanvasElement, private opts: Options) {
-    const mobile = isMobile();
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: 'default' });
-    this.renderer.setPixelRatio(maxPixelRatio(mobile, window.devicePixelRatio));
+    const settings = rendererSettings(detectDevice());
+    this.settings = settings;
+    // WebGL2 when available, WebGL1 otherwise (three r162 renders on both).
+    const ctx = createGLContext<WebGLRenderingContext>(canvas, settings.attributes);
+    if (!ctx) throw new WebGLUnavailableError();
+    this.glVersion = ctx.version;
+    canvas.dataset.webgl = String(ctx.version);
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      context: ctx.gl,
+      antialias: settings.antialias,
+      powerPreference: 'default',
+    });
+    this.renderer.setPixelRatio(settings.pixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = settings.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 
     this.scene.background = new THREE.Color('#0b111c');
     this.scene.fog = new THREE.Fog('#0b111c', 6, 13);
-
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
-    this.scene.environment = envRT.texture;
-    this.scene.environmentIntensity = 0.35;
-    pmrem.dispose();
-    this.disposables.push(envRT);
+    this.buildEnvironment();
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.copy(TARGET);
@@ -101,12 +109,26 @@ export class EscapeScene {
     this.controls.zoomSpeed = 0.6;
 
     this.build();
+    this.tuneMaterials();
     this.fitCamera(true);
 
     canvas.addEventListener('pointerdown', this.onDown);
     canvas.addEventListener('pointerup', this.onUp);
     canvas.addEventListener('pointermove', this.onMove);
-    canvas.addEventListener('webglcontextlost', this.onLost);
+    this.stopWatching = watchContextLoss(canvas, {
+      onLost: () => {
+        this.renderer.setAnimationLoop(null);
+        this.opts.onContextState('lost');
+      },
+      onRestored: () => {
+        // three re-initialises its GL state itself; render-target content (the env map) must be rebuilt.
+        this.buildEnvironment();
+        this.renderer.shadowMap.needsUpdate = true;
+        this.renderer.setAnimationLoop(this.tick);
+        this.opts.onContextState('restored');
+      },
+      onGiveUp: () => this.opts.onContextState('giveup'),
+    });
     this.resizeObs = new ResizeObserver(() => this.fitCamera(false));
     this.resizeObs.observe(canvas.parentElement ?? canvas);
     this.renderer.setAnimationLoop(this.tick);
@@ -154,7 +176,8 @@ export class EscapeScene {
     this.canvas.removeEventListener('pointerdown', this.onDown);
     this.canvas.removeEventListener('pointerup', this.onUp);
     this.canvas.removeEventListener('pointermove', this.onMove);
-    this.canvas.removeEventListener('webglcontextlost', this.onLost);
+    this.stopWatching();
+    this.envRT?.dispose();
     this.controls.dispose();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -169,11 +192,6 @@ export class EscapeScene {
 
   // ---------------------------------------------------------------- input
 
-  private onLost = (e: Event) => {
-    e.preventDefault();
-    this.renderer.setAnimationLoop(null);
-    this.opts.onContextLost();
-  };
 
   private onDown = (e: PointerEvent) => {
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -246,9 +264,8 @@ export class EscapeScene {
 
   private tick = () => {
     if (this.disposed) return;
-    this.timer.update();
-    const dt = Math.min(this.timer.getDelta(), 0.05);
-    const t = this.timer.getElapsed();
+    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const t = this.clock.elapsedTime;
     const rm = this.opts.reducedMotion;
 
     // highlights
@@ -328,6 +345,34 @@ export class EscapeScene {
 
   // ---------------------------------------------------------------- building
 
+  private settings!: ReturnType<typeof rendererSettings>;
+
+  /** Image-based lighting for the brass/copper reflections (procedural room, no files). */
+  private buildEnvironment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const env = new RoomEnvironment(this.renderer);
+    const rt = pmrem.fromScene(env, 0.04);
+    env.dispose();
+    pmrem.dispose();
+    this.envRT?.dispose();
+    this.envRT = rt;
+    this.scene.environment = rt.texture;
+  }
+
+  /** Environment strength and texture filtering, applied once to every material. */
+  private tuneMaterials() {
+    const aniso = Math.min(this.settings.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
+    this.scene.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      if (!mats) return;
+      (Array.isArray(mats) ? mats : [mats]).forEach((m) => {
+        if (m instanceof THREE.MeshStandardMaterial) m.envMapIntensity = ENV_INTENSITY;
+        const map = (m as THREE.MeshStandardMaterial).map;
+        if (map) map.anisotropy = aniso;
+      });
+    });
+  }
+
   private tag(o: THREE.Object3D, id: HotspotId) {
     o.userData.hotspot = id;
     this.hotspotMeshes.push(o);
@@ -346,7 +391,7 @@ export class EscapeScene {
     lamp.position.set(0.05, 2.75, 0.35);
     lamp.target.position.set(-0.15, 0, -0.1);
     lamp.castShadow = true;
-    lamp.shadow.mapSize.setScalar(isMobile() ? 512 : 1024);
+    lamp.shadow.mapSize.setScalar(this.settings.shadowMapSize);
     lamp.shadow.bias = -0.0005;
     lamp.shadow.radius = 4;
     s.add(lamp, lamp.target);

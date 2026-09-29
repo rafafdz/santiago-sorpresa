@@ -1,10 +1,8 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { setSoundEnabled, sfx } from './game/audio';
 import { TIME_LIMIT_S } from './game/puzzle';
 import { initialState, objective, reducer, remainingSeconds, steps } from './game/state';
-import LiteScene from './scene/LiteScene';
 import type { HotspotId } from './scene/sceneProps';
-import { chooseRenderMode, detectWebGL, readViewPref, saveViewPref, viewFromQuery, type RenderMode } from './scene/webgl';
 import { BagModal } from './ui/BagModal';
 import { Ending } from './ui/Ending';
 import { Hud } from './ui/Hud';
@@ -13,7 +11,7 @@ import { Modal } from './ui/Modal';
 import { SafeModal } from './ui/SafeModal';
 import { WallModal } from './ui/WallModal';
 
-// three.js is only downloaded when the 3D view is actually used.
+// three.js lives in its own chunk so the intro paints before the 3D renderer is parsed.
 const SceneView = lazy(() => import('./scene/SceneView'));
 
 function usePrefersReducedMotion() {
@@ -37,32 +35,6 @@ export default function App() {
   const [timeUpShown, setTimeUpShown] = useState(false);
   const reducedMotion = usePrefersReducedMotion();
   const endingTimer = useRef<number | undefined>(undefined);
-  // Detect WebGL once, before anything from three.js is loaded.
-  const webgl = useMemo(() => detectWebGL(), []);
-  const [mode, setMode] = useState<RenderMode>(() =>
-    chooseRenderMode({ webgl, query: viewFromQuery(window.location.search), pref: readViewPref() }),
-  );
-  const [canTry3d, setCanTry3d] = useState(webgl.supported);
-  const [viewNote, setViewNote] = useState<string | null>(() =>
-    webgl.supported ? null : 'Estás en la vista ligera: la misma habitación y el mismo misterio, más livianos para este navegador.',
-  );
-
-  const on3dFail = useCallback((reason: 'init' | 'lost') => {
-    setMode('lite');
-    if (reason === 'init') setCanTry3d(false);
-    setViewNote(
-      reason === 'lost'
-        ? 'La vista 3D se tomó un respiro, así que seguimos en la vista ligera. Tu avance sigue intacto.'
-        : 'Pasamos a la vista ligera para que todo funcione fluido aquí. Tu avance sigue intacto.',
-    );
-  }, []);
-
-  const switchView = () => {
-    const next: RenderMode = mode === '3d' ? 'lite' : '3d';
-    saveViewPref(next);
-    setViewNote(null);
-    setMode(next);
-  };
 
   useEffect(() => {
     if (s.phase === 'intro' || s.finishedAt) return;
@@ -78,12 +50,6 @@ export default function App() {
       setToast('Se acabó el reloj oficial… pero esta caja es paciente. Sigue cuando quieras.');
     }
   }, [remaining, s.unlocked, s.phase, timeUpShown]);
-
-  useEffect(() => {
-    if (!viewNote || s.phase === 'intro') return;
-    const id = window.setTimeout(() => setViewNote(null), 9000);
-    return () => clearTimeout(id);
-  }, [viewNote, s.phase]);
 
   useEffect(() => {
     if (!toast) return;
@@ -127,37 +93,15 @@ export default function App() {
     reducedMotion,
     onTap,
     resetSignal,
-    onFail: on3dFail,
   };
   const elapsed = s.startedAt && s.finishedAt ? (s.finishedAt - s.startedAt) / 1000 : TIME_LIMIT_S - remaining;
 
   return (
     <div className={`app ${reducedMotion ? 'reduced' : ''}`}>
       <div className="grain" aria-hidden="true" />
-      {mode === '3d' ? (
-        <Suspense fallback={<div className="scene scene-loading">Preparando la habitación…</div>}>
-          <SceneView {...sceneProps} />
-        </Suspense>
-      ) : (
-        <LiteScene {...sceneProps} />
-      )}
-
-      {s.phase !== 'intro' && (canTry3d || mode === '3d') && (
-        <button type="button" className="view-toggle" onClick={switchView}>
-          {mode === '3d' ? 'Usar vista ligera' : 'Probar vista 3D'}
-        </button>
-      )}
-
-      {viewNote && s.phase !== 'intro' && !s.modal && !s.showEnding && (
-        <div className="view-note" role="status">
-          <span>{viewNote}</span>
-          <button type="button" className="icon-btn" aria-label="Cerrar aviso" onClick={() => setViewNote(null)}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </div>
-      )}
+      <Suspense fallback={<div className="scene scene-loading">Preparando la habitación…</div>}>
+        <SceneView {...sceneProps} />
+      </Suspense>
 
       {s.phase !== 'intro' && (
         <Hud

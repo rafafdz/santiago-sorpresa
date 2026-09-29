@@ -15,7 +15,7 @@ npm run dev        # servidor de desarrollo → http://localhost:5173/
 npm test           # tests del puzzle (vitest)
 npm run build      # typecheck + build de producción en dist/
 npm run preview    # sirve dist/ → http://localhost:4173/santiago-sorpresa/
-npm run smoke      # (tras build) juega todo en Chromium: Android sin WebGL, móvil/escritorio 3D, cambio de vista y pérdida de contexto
+npm run smoke      # (tras build) juega todo en Chromium: escritorio WebGL2, Android WebGL2 y WebGL1, contexto perdido, sin WebGL
 ```
 
 `npm run smoke` necesita un Chromium: define `CHROME_PATH=/ruta/a/chrome` o instala uno con
@@ -28,18 +28,24 @@ El build usa `base: '/santiago-sorpresa/'` (GitHub Pages). Para otro hosting en 
 `.github/workflows/deploy.yml` corre los tests, construye y publica en GitHub Pages en cada push a `main`
 (Settings → Pages → Source: *GitHub Actions*). Repo: `rafafdz/santiago-sorpresa`.
 
-## Vista 3D y vista ligera (Android sin WebGL)
+## 3D en Android: WebGL2 → WebGL1
 
-- Antes de montar nada se prueba si el navegador puede crear un contexto WebGL2/WebGL (`src/scene/webgl.ts`,
-  sin importar three.js). Si no puede, el juego arranca directo en la **vista ligera**: el mismo diorama en SVG
-  (muro con la misma ruta, bolsa, cuerda, caja), las mismas zonas tocables y el mismo flujo completo.
-- La escena 3D (`SceneView`, con three.js) se carga con `React.lazy` solo si se usa, así que la vista ligera nunca
-  descarga ni evalúa el renderer.
-- Si el renderer falla al iniciar o el GPU pierde el contexto (`webglcontextlost`), se pasa a la vista ligera con un
-  aviso amable y sin perder el avance.
-- Botón discreto “Usar vista ligera” / “Probar vista 3D” (la elección se recuerda en el navegador).
-  También se puede forzar con `?vista=ligera` o `?vista=3d`.
-- En celulares el pixel ratio máximo es 1.5, sin antialias y con sombras de 512 px.
+El juego es **siempre 3D** y necesita WebGL (no hay vista alternativa 2D).
+
+- **three.js fijado en r162** (`"three": "0.162.0"`): es la última versión cuyo `WebGLRenderer` funciona con
+  **WebGL1**; desde r163 exige WebGL2. No actualizar three sin revisar esto.
+- `src/scene/webgl.ts` crea el contexto en el canvas probando `webgl2` → `webgl` → `experimental-webgl` y se lo
+  pasa al renderer. La versión usada queda en `canvas[data-webgl]`.
+- Presupuesto por dispositivo (`rendererSettings`): en celulares pixel ratio máx. **1.5**, MSAA (casi gratis en GPUs
+  móviles por tiles), sombras PCF de 512 px y anisotropía 2; en escritorio pixel ratio máx. 2, MSAA y sombras
+  suaves de 1024 px. Misma escena, materiales PBR, reflejos (mapa de entorno procedural) y tone mapping ACES con
+  salida sRGB en todos. Sin post-procesado.
+- **Contexto perdido** (`webglcontextlost`): se pausa el render y se muestra “Recuperando los gráficos 3D…”. Si el
+  navegador lo restaura, se reconstruye el mapa de entorno y se sigue; si no lo hace en 3 s, se recrea el canvas.
+  El avance del juego vive en React, así que nunca se pierde.
+- **Sin WebGL**: mensaje claro con qué hacer (activar la aceleración gráfica o abrir Chrome/Firefox actualizados) y
+  botón “Reintentar”.
+- three.js va en un chunk aparte (`React.lazy`) para que la intro aparezca antes de parsear el renderer.
 
 ## Solución (solo para el anfitrión — no aparece en la interfaz)
 
@@ -57,7 +63,7 @@ El build usa `base: '/santiago-sorpresa/'` (GitHub Pages). Para otro hosting en 
    Gira el dial (arrastrar, flechas ◀ ▶, tocar un número, o teclado ←/→ y dígitos) y *Fijar* cada número.
 
 El código no está escrito a mano: `deriveCode()` en `src/game/puzzle.ts` cuenta las presas azules por tramo y las
-ordena por la altura de cada bandera, a partir de los mismos datos que dibujan el muro 3D y la vista 2D (hay tests).
+ordena por la altura de cada bandera, a partir de los mismos datos que dibujan el muro 3D y el diálogo del muro (hay tests).
 
 **Errores sin castigo, con retroalimentación que no revela el código** (`diagnose()`):
 - números correctos en otro orden (p. ej. 4-7-2): “suenan bien, pero no en ese orden”;
@@ -89,10 +95,9 @@ src/
   game/audio.ts        clicks/golpes/campanitas con Web Audio + vibración
   scene/EscapeScene.ts diorama Three.js (mesa, caja fuerte con puerta animada, bolsa, muro, cuerda, lámpara)
   scene/textures.ts    texturas procedurales en canvas
-  scene/SceneView.tsx  vista 3D (carga diferida): puente React ↔ Three y etiquetas accesibles
-  scene/LiteScene.tsx  vista ligera 2D en SVG, sin three.js
-  scene/webgl.ts       detección de WebGL y elección de vista (+ webgl.test.ts)
-  ui/WallBoard.tsx     tablero del muro compartido por el diálogo y la vista ligera
+  scene/SceneView.tsx  vista 3D (carga diferida): puente React ↔ Three, etiquetas accesibles, estados de GPU
+  scene/webgl.ts       contexto WebGL2→WebGL1, ajustes por dispositivo, contexto perdido (+ webgl.test.ts)
+  ui/WallBoard.tsx     tablero del muro (SVG) del diálogo
   ui/                  intro, HUD, bolsa, muro, caja fuerte (dial), invitación, modal accesible
 scripts/smoke.mjs      smoke test end-to-end con Playwright
 ```
@@ -103,4 +108,4 @@ scripts/smoke.mjs      smoke test end-to-end con Playwright
   muro es un botón con color y posición descritos.
 - Diálogos con `aria-modal`, foco atrapado, `Esc` para cerrar; el dial es un `role="slider"` con flechas/Enter/Retroceso.
 - `prefers-reduced-motion`: sin animaciones de cámara/polvo/confeti; la puerta se abre sin animación.
-- Pixel ratio máximo 2, una sola luz con sombras, ~90 partículas; sin post-procesado.
+- Pixel ratio máximo 1.5 en celulares y 2 en escritorio, una sola luz con sombras, ~90 partículas; sin post-procesado.

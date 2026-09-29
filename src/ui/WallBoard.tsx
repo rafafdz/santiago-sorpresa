@@ -24,43 +24,27 @@ function where(x: number, y: number) {
 }
 
 interface Props {
-  /** Interactive board (wall dialog): every hold is a toggle button. */
-  marks?: number[];
-  onToggleMark?: (i: number) => void;
+  marks: number[];
+  onToggleMark: (i: number) => void;
   className?: string;
-  /** Unique prefix for SVG ids when several boards are on the page. */
+  /** Unique prefix for SVG ids. */
   idPrefix?: string;
-  /** Nested placement inside another SVG (lite diorama). */
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
 }
 
 /**
- * The climbing board drawn from the puzzle data. The 3D texture draws the same
- * data on a canvas, so every view shows the identical route.
+ * The climbing board (wall dialog) drawn from the puzzle data. The 3D texture
+ * draws the same data on a canvas, so both show the identical route.
  */
-export function WallBoard({ marks = [], onToggleMark, className, idPrefix = 'wb', x, y, width, height }: Props) {
+export function WallBoard({ marks, onToggleMark, className, idPrefix = 'wb' }: Props) {
   const line = useMemo(() => routePolyline().map((p) => `${p.x},${p.y}`).join(' '), []);
   const paths = useMemo(() => HOLDS.map((h, i) => blobPath(h.x, h.y, h.r, i + 1)), []);
-  const interactive = !!onToggleMark;
 
   return (
     <svg
       className={className}
-      x={x}
-      y={y}
-      width={width}
-      height={height}
       viewBox={`0 0 ${BOARD_W} ${BOARD_H}`}
-      {...(interactive
-        ? {
-            role: 'group',
-            'aria-label':
-              'Muro de escalada: nieve arriba, una laguna abajo, tres banderas rojas y una línea de magnesio que sube desde la laguna pasando por varias presas',
-          }
-        : { 'aria-hidden': true })}
+      role="group"
+      aria-label="Muro de escalada: nieve arriba, una laguna abajo, tres banderas rojas y una línea de magnesio que sube desde la laguna pasando por varias presas"
     >
       <defs>
         <linearGradient id={`${idPrefix}-g`} x1="0" y1="0" x2="0" y2="1">
@@ -83,7 +67,6 @@ export function WallBoard({ marks = [], onToggleMark, className, idPrefix = 'wb'
             {marked && <path className="chalk-mark" d={blobPath(h.x, h.y, h.r * 0.75, i + 99)} fill="#fbf8f1" opacity=".9" />}
           </>
         );
-        if (!interactive) return <g key={i}>{body}</g>;
         const label = `Presa ${COLOR_NAME[h.color]} ${where(h.x, h.y)}${h.segment !== undefined ? ', sobre la línea' : ''}${
           marked ? ', marcada' : ''
         }`;
@@ -109,13 +92,13 @@ export function WallBoard({ marks = [], onToggleMark, className, idPrefix = 'wb'
         );
       })}
       {FLAGS.map((f, i) => (
-        <g key={i} {...(interactive ? { role: 'img', 'aria-label': `Bandera roja ${where(f.x, f.y)}` } : {})}>
+        <g key={i} role="img" aria-label={`Bandera roja ${where(f.x, f.y)}`}>
           <line x1={f.x} y1={f.y + 12} x2={f.x} y2={f.y - 16} stroke="#f3e6cc" strokeWidth="2" />
           <path d={flagPennant(f.x, f.y)} fill="#e2483d" />
         </g>
       ))}
       <path d={SNOW_PATH} fill="#eef3f8" />
-      <g {...(interactive ? { role: 'img', 'aria-label': 'Laguna al pie del muro' } : {})}>
+      <g role="img" aria-label="Laguna al pie del muro">
         <ellipse cx={LAGUNA.cx} cy={LAGUNA.cy} rx={LAGUNA.rx} ry={LAGUNA.ry} fill="#3f8fc4" />
         <text x={LAGUNA.cx} y={LAGUNA.cy + 3} textAnchor="middle" fill="#f3e6cc" fontFamily="Georgia, serif" fontWeight="600" fontSize="9">
           LAGUNA

@@ -3,10 +3,11 @@
  *
  *   npm run build && npm run smoke
  *
- * Runs against `vite preview` (started here) in four setups:
- *   - Android-like phone with WebGL disabled   → must use the lite 2D view, never load three.js
- *   - phone and desktop with WebGL              → 3D view
- *   - manual "Usar vista ligera" toggle, ?vista=ligera, and a forced WebGL context loss
+ * Runs against `vite preview` (started here):
+ *   - desktop with WebGL2, Android-like phone with WebGL2, and the same phone with only WebGL1
+ *     (Chromium --disable-webgl2) → the full game in 3D, and the right context version
+ *   - WebGL context lost + restored, and lost without restore (canvas is rebuilt, progress kept)
+ *   - no WebGL at all → honest, actionable message instead of a broken page
  *
  * Needs a Chromium: set CHROME_PATH, or install one with `npx playwright-core install chromium`.
  */
@@ -47,22 +48,26 @@ async function enterCode(page, code) {
   return page.locator('.safe-msg').textContent();
 }
 
-async function playThrough(browser, name, ctxOpts, expectLite) {
+async function playThrough(browser, name, ctxOpts, expectGL) {
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
   const errors = [];
-  const scripts = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  page.on('request', (r) => r.url().endsWith('.js') && scripts.push(r.url()));
 
   await page.goto(URL);
   assert((await page.locator('.letter-sign').textContent()).includes('Rafa, Tomás C y Tomás P'), `${name}: intro signature`);
   await page.getByRole('button', { name: 'Entrar a la habitación' }).click();
-  await page.waitForTimeout(900);
-  assert((await page.locator('.lite').count() > 0) === expectLite, `${name}: expected lite=${expectLite}`);
-  assert((await page.getByText(/no pudo iniciar WebGL|no puede iniciar WebGL/).count()) === 0, `${name}: WebGL error text shown`);
-  if (expectLite) assert(!scripts.some((s) => s.includes('SceneView')), `${name}: three.js chunk loaded in lite view`);
+  const canvas = page.locator('canvas.scene-canvas[data-webgl]');
+  await canvas.waitFor({ timeout: 15000 });
+  assert((await canvas.getAttribute('data-webgl')) === String(expectGL), `${name}: expected WebGL${expectGL}`);
+  const ratio = await page.evaluate(() => {
+    const c = document.querySelector('canvas.scene-canvas');
+    return c.width / c.clientWidth;
+  });
+  if (ctxOpts.isMobile) assert(ratio <= 1.5 + 0.01, `${name}: phone pixel ratio ${ratio}`);
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${process.env.SMOKE_SHOTS ?? '.'}/smoke-${name.replace(/\W+/g, '-')}.png` }).catch(() => {});
 
   // wall before clue → points to the bag
   await page.getByRole('button', { name: 'Mirar de cerca el muro de escalada' }).click();
@@ -94,7 +99,7 @@ async function playThrough(browser, name, ctxOpts, expectLite) {
   assert((await page.locator('.progress li.done').count()) === 0, `${name}: reset clears progress`);
   assert(errors.length === 0, `${name}: page errors ${errors.join(' | ')}`);
   await ctx.close();
-  console.log(`✓ ${name} (${expectLite ? 'vista ligera' : '3D'})`);
+  console.log(`✓ ${name} (3D, WebGL${expectGL}, pixel ratio ${ratio})`);
 }
 
 const phone = {
@@ -108,37 +113,63 @@ const phone = {
 const desktop = { viewport: { width: 1440, height: 900 } };
 
 const preview = await startPreview();
+const gl2 = await launch(['--use-angle=swiftshader', '--enable-unsafe-swiftshader']);
+const gl1 = await launch(['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-webgl2']);
 const noGL = await launch(['--disable-webgl', '--disable-webgl2', '--disable-3d-apis', '--disable-gpu']);
-const withGL = await launch(['--use-angle=swiftshader', '--enable-unsafe-swiftshader']);
 try {
-  await playThrough(noGL, 'android sin WebGL', phone, true);
-  await playThrough(noGL, 'escritorio sin WebGL', desktop, true);
-  await playThrough(withGL, 'móvil con WebGL', phone, false);
-  await playThrough(withGL, 'escritorio con WebGL', desktop, false);
+  await playThrough(gl2, 'escritorio', desktop, 2);
+  await playThrough(gl2, 'android', phone, 2);
+  await playThrough(gl1, 'android solo WebGL1', phone, 1);
 
-  // manual toggle + forced lite via query + context loss
-  const ctx = await withGL.newContext(phone);
-  const page = await ctx.newPage();
-  await page.goto(URL);
-  await page.getByRole('button', { name: 'Entrar a la habitación' }).click();
-  await page.getByRole('button', { name: 'Usar vista ligera' }).click();
-  assert((await page.locator('.lite').count()) === 1, 'toggle → lite');
-  await page.getByRole('button', { name: 'Probar vista 3D' }).click();
-  await page.waitForSelector('canvas.scene-canvas');
-  await page.waitForTimeout(600);
-  await page.evaluate(() => {
-    const c = document.querySelector('canvas.scene-canvas');
-    (c.getContext('webgl2') || c.getContext('webgl')).getExtension('WEBGL_lose_context').loseContext();
-  });
-  await page.waitForSelector('.lite');
-  assert((await page.locator('.view-note').textContent()).includes('Tu avance sigue intacto'), 'context-loss message');
-  await page.goto(URL + '?vista=ligera');
-  await page.getByRole('button', { name: 'Entrar a la habitación' }).click();
-  assert((await page.locator('.lite').count()) === 1, '?vista=ligera');
-  await ctx.close();
-  console.log('✓ cambio manual de vista, ?vista=ligera y pérdida de contexto WebGL');
+  // context lost → restored, then lost for good → canvas rebuilt; progress survives both
+  {
+    const ctx = await gl2.newContext(phone);
+    const page = await ctx.newPage();
+    await page.goto(URL);
+    await page.getByRole('button', { name: 'Entrar a la habitación' }).click();
+    await page.getByRole('button', { name: 'Inspeccionar la bolsa de magnesio' }).click();
+    await page.getByRole('button', { name: 'Meter la mano' }).click();
+    await page.getByRole('button', { name: 'Cerrar' }).click();
+    await page.locator('canvas.scene-canvas[data-webgl]').waitFor();
+    await page.evaluate(() => {
+      const c = document.querySelector('canvas.scene-canvas');
+      const ext = (c.getContext('webgl2') || c.getContext('webgl')).getExtension('WEBGL_lose_context');
+      window.__ext = ext;
+      ext.loseContext();
+    });
+    await page.getByText('Recuperando los gráficos 3D').waitFor();
+    await page.evaluate(() => window.__ext.restoreContext());
+    await page.getByRole('button', { name: 'Acercarse a la caja fuerte' }).waitFor();
+    assert((await page.getByText('Recuperando los gráficos 3D').count()) === 0, 'context restored');
+    await page.evaluate(() => {
+      const c = document.querySelector('canvas.scene-canvas');
+      (c.getContext('webgl2') || c.getContext('webgl')).getExtension('WEBGL_lose_context').loseContext();
+    });
+    await page.getByText('Recuperando los gráficos 3D').waitFor();
+    await page.getByRole('button', { name: 'Acercarse a la caja fuerte' }).waitFor({ timeout: 8000 });
+    assert((await page.locator('canvas.scene-canvas[data-webgl]').count()) === 1, 'canvas rebuilt after giving up');
+    assert((await page.locator('.progress li.done').count()) === 1, 'progress kept across context loss');
+    await ctx.close();
+    console.log('✓ contexto WebGL perdido → restaurado, y perdido sin restaurar → canvas recreado, avance intacto');
+  }
+
+  // no WebGL at all → honest message, no 2D replacement
+  {
+    const ctx = await noGL.newContext(phone);
+    const page = await ctx.newPage();
+    await page.goto(URL);
+    await page.getByRole('button', { name: 'Entrar a la habitación' }).click();
+    const alert = page.getByRole('alert');
+    await alert.waitFor();
+    const text = await alert.innerText();
+    assert(/aceleración gráfica/.test(text) && /Chrome o Firefox/.test(text), 'actionable no-WebGL message');
+    assert((await page.getByRole('button', { name: 'Reintentar' }).count()) === 1, 'retry button');
+    await ctx.close();
+    console.log('✓ sin WebGL: mensaje claro con “Reintentar”, sin vista alternativa');
+  }
 } finally {
+  await gl2.close();
+  await gl1.close();
   await noGL.close();
-  await withGL.close();
   preview?.kill();
 }

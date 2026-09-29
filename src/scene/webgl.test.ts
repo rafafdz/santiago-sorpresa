@@ -1,72 +1,128 @@
 import { describe, expect, it } from 'vitest';
-import { chooseRenderMode, detectWebGL, maxPixelRatio, viewFromQuery } from './webgl';
+import { createGLContext, maxPixelRatio, rendererSettings, watchContextLoss } from './webgl';
 
-const ctx = (lost = false) => ({ isContextLost: () => lost, getExtension: () => ({ loseContext: () => {} }) });
-const canvasWith = (map: Record<string, unknown>) => () => ({ getContext: (id: string) => map[id] ?? null });
+const gl = (lost = false) => ({ isContextLost: () => lost });
+const canvasWith = (map: Record<string, unknown>) => {
+  const asked: string[] = [];
+  return {
+    asked,
+    getContext: (id: string) => {
+      asked.push(id);
+      return map[id] ?? null;
+    },
+  };
+};
 
-describe('detectWebGL', () => {
-  it('prefers WebGL2', () => {
-    expect(detectWebGL(canvasWith({ webgl2: ctx(), webgl: ctx() }))).toEqual({ supported: true, version: 2 });
+describe('createGLContext (WebGL2 → WebGL1)', () => {
+  it('uses WebGL2 when available', () => {
+    const c = canvasWith({ webgl2: gl(), webgl: gl() });
+    expect(createGLContext(c, {})?.version).toBe(2);
+    expect(c.asked).toEqual(['webgl2']);
   });
+
   it('falls back to WebGL1', () => {
-    expect(detectWebGL(canvasWith({ webgl: ctx() }))).toEqual({ supported: true, version: 1 });
-    expect(detectWebGL(canvasWith({ 'experimental-webgl': ctx() }))).toEqual({ supported: true, version: 1 });
+    expect(createGLContext(canvasWith({ webgl: gl() }), {})?.version).toBe(1);
+    expect(createGLContext(canvasWith({ 'experimental-webgl': gl() }), {})?.version).toBe(1);
   });
-  it('reports no support when no context can be created', () => {
-    expect(detectWebGL(canvasWith({}))).toEqual({ supported: false, version: 0 });
-    expect(detectWebGL(() => null)).toEqual({ supported: false, version: 0 });
+
+  it('skips a context that is already lost', () => {
+    expect(createGLContext(canvasWith({ webgl2: gl(true), webgl: gl() }), {})?.version).toBe(1);
   });
-  it('treats an already-lost context as unsupported', () => {
-    expect(detectWebGL(canvasWith({ webgl2: ctx(true) })).supported).toBe(false);
-  });
+
   it('survives getContext throwing (some Android WebViews do)', () => {
-    const throwing = () => ({
+    const c = {
       getContext: (id: string) => {
         if (id === 'webgl2') throw new Error('blocked');
-        return id === 'webgl' ? ctx() : null;
+        return id === 'webgl' ? gl() : null;
       },
-    });
-    expect(detectWebGL(throwing)).toEqual({ supported: true, version: 1 });
-    expect(
-      detectWebGL(() => {
-        throw new Error('no canvas');
-      }).supported,
-    ).toBe(false);
+    };
+    expect(createGLContext(c, {})?.version).toBe(1);
   });
-  it('releases the probe context', () => {
-    let released = false;
-    const gl = { isContextLost: () => false, getExtension: () => ({ loseContext: () => (released = true) }) };
-    detectWebGL(canvasWith({ webgl2: gl }));
-    expect(released).toBe(true);
+
+  it('returns null when there is no WebGL at all', () => {
+    expect(createGLContext(canvasWith({}), {})).toBeNull();
+  });
+
+  it('passes the context attributes through', () => {
+    let got: unknown;
+    createGLContext({ getContext: (_id: string, a?: unknown) => ((got = a), gl()) }, { antialias: false, stencil: false });
+    expect(got).toEqual({ antialias: false, stencil: false });
   });
 });
 
-describe('chooseRenderMode', () => {
-  const yes = { supported: true, version: 2 as const };
-  const no = { supported: false, version: 0 as const };
-  it('always uses the lite view without WebGL, even if 3D was requested', () => {
-    expect(chooseRenderMode({ webgl: no })).toBe('lite');
-    expect(chooseRenderMode({ webgl: no, query: '3d', pref: '3d' })).toBe('lite');
-  });
-  it('defaults to 3D when WebGL works', () => {
-    expect(chooseRenderMode({ webgl: yes })).toBe('3d');
-  });
-  it('honours the query first, then the saved preference', () => {
-    expect(chooseRenderMode({ webgl: yes, pref: 'lite' })).toBe('lite');
-    expect(chooseRenderMode({ webgl: yes, query: '3d', pref: 'lite' })).toBe('3d');
-    expect(chooseRenderMode({ webgl: yes, query: 'lite', pref: '3d' })).toBe('lite');
-  });
-  it('parses the ?vista= parameter', () => {
-    expect(viewFromQuery('?vista=ligera')).toBe('lite');
-    expect(viewFromQuery('?vista=3d')).toBe('3d');
-    expect(viewFromQuery('?x=1')).toBeNull();
-  });
-});
-
-describe('maxPixelRatio', () => {
-  it('caps phones lower than desktops', () => {
+describe('renderer settings', () => {
+  it('caps pixel ratio at 1.5 on phones and 2 on desktop', () => {
     expect(maxPixelRatio(true, 3)).toBe(1.5);
-    expect(maxPixelRatio(false, 3)).toBe(2);
     expect(maxPixelRatio(true, 1)).toBe(1);
+    expect(maxPixelRatio(false, 3)).toBe(2);
+    expect(maxPixelRatio(false, 0)).toBe(1);
+  });
+
+  it('keeps full quality on desktop', () => {
+    const s = rendererSettings({ mobile: false, dpr: 2 });
+    expect(s).toMatchObject({ pixelRatio: 2, antialias: true, shadowMapSize: 1024, softShadows: true });
+  });
+
+  it('budgets phones: capped DPR and cheaper shadows, MSAA kept', () => {
+    expect(rendererSettings({ mobile: true, dpr: 3 })).toMatchObject({
+      pixelRatio: 1.5,
+      antialias: true,
+      shadowMapSize: 512,
+      softShadows: false,
+    });
+    expect(rendererSettings({ mobile: true, dpr: 3 }).attributes).toMatchObject({
+      antialias: true,
+      powerPreference: 'default',
+      failIfMajorPerformanceCaveat: false,
+    });
+  });
+});
+
+describe('watchContextLoss', () => {
+  function setup() {
+    const target = new EventTarget();
+    const log: string[] = [];
+    const timers: (() => void)[] = [];
+    const dispose = watchContextLoss(target, {
+      onLost: () => log.push('lost'),
+      onRestored: () => log.push('restored'),
+      onGiveUp: () => log.push('giveup'),
+      setTimer: (fn) => timers.push(fn) - 1,
+      clearTimer: (id) => (timers[id as number] = () => {}),
+    });
+    const fire = (type: string) => {
+      const e = new Event(type, { cancelable: true });
+      target.dispatchEvent(e);
+      return e;
+    };
+    return { log, timers, dispose, fire };
+  }
+
+  it('prevents the default on loss so the browser may restore the context', () => {
+    const { fire, log } = setup();
+    expect(fire('webglcontextlost').defaultPrevented).toBe(true);
+    expect(log).toEqual(['lost']);
+  });
+
+  it('resumes on restore and cancels the give-up timer', () => {
+    const { fire, log, timers } = setup();
+    fire('webglcontextlost');
+    fire('webglcontextrestored');
+    timers.forEach((t) => t());
+    expect(log).toEqual(['lost', 'restored']);
+  });
+
+  it('gives up when the context is never restored', () => {
+    const { fire, log, timers } = setup();
+    fire('webglcontextlost');
+    timers.forEach((t) => t());
+    expect(log).toEqual(['lost', 'giveup']);
+  });
+
+  it('stops listening after dispose', () => {
+    const { fire, log, dispose } = setup();
+    dispose();
+    fire('webglcontextlost');
+    expect(log).toEqual([]);
   });
 });
